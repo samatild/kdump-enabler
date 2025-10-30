@@ -42,7 +42,7 @@ A Bash script that automatically enables and configures kdump across multiple Li
 Clone the repository and run the script:
 
 ```bash
-git clone https://github.com/yourusername/kdump-enabler.git
+git clone https://github.com/samatild/kdump-enabler.git
 cd kdump-enabler
 sudo ./kdump-enabler.sh
 ```
@@ -50,7 +50,7 @@ sudo ./kdump-enabler.sh
 Or download and run directly:
 
 ```bash
-curl -O https://raw.githubusercontent.com/yourusername/kdump-enabler/main/kdump-enabler.sh
+curl -O https://raw.githubusercontent.com/samatild/kdump-enabler/main/kdump-enabler.sh
 chmod +x kdump-enabler.sh
 sudo ./kdump-enabler.sh
 ```
@@ -306,5 +306,5 @@ Samuel Matildes
 
 ## Support
 
-For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/yourusername/kdump-enabler).
+For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/samatild/kdump-enabler).
 
