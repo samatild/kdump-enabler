@@ -4,7 +4,7 @@ A Bash script that automatically enables and configures kdump across multiple Li
 
 ## Features
 
-- **Multi-distribution support**: Works with Ubuntu, Debian, RHEL, CentOS, Fedora, openSUSE, and Arch Linux
+- **Multi-distribution support**: Works with Ubuntu, Debian, RHEL, CentOS, Fedora, openSUSE, Arch Linux, and Azure Linux 4
 - **Automatic package installation**: Installs required kdump tools
 - **Intelligent crashkernel sizing**: Automatically determines appropriate memory allocation based on system RAM
 - **GRUB configuration**: Updates bootloader configuration with crashkernel parameter
@@ -32,6 +32,7 @@ A Bash script that automatically enables and configures kdump across multiple Li
 | Rocky Linux | yum | ✓ |
 | AlmaLinux | yum | ✓ |
 | Fedora | dnf | ✓ |
+| Azure Linux 4 | dnf | Setup verified; post-reboot dump test pending |
 | openSUSE | zypper | ✓ |
 | SLES | zypper | ✓ |
 | Arch Linux | pacman | ✓ |
@@ -105,6 +106,7 @@ sudo ./kdump-enabler.sh --no-sysrq
 3. **Installs required packages**:
    - Ubuntu/Debian: `linux-crashdump`, `kdump-tools`, `kexec-tools`
    - RHEL/CentOS/Fedora: `kexec-tools`
+   - Azure Linux 4: `kdump-utils`, `kexec-tools`, `makedumpfile`, `grubby`
    - openSUSE/SLES: `kdump`
    - Arch/Manjaro: `kexec-tools`
 4. **Configures crashkernel parameter** in GRUB based on system RAM:
@@ -114,6 +116,29 @@ sudo ./kdump-enabler.sh --no-sysrq
 5. **Enables kdump service** at boot and starts it
 6. **Enables SysRq** for manual crash triggering
 7. **Creates crash dump directory** at `/var/crash`
+
+### Azure Linux 4
+
+Azure Linux splits the kdump service and `kdumpctl` into `kdump-utils`;
+`kexec-tools` alone is not sufficient. The script updates all installed BLS boot
+entries with `grubby`, which also maintains `/etc/kernel/cmdline` for future kernels.
+It backs up the BLS entries, GRUB defaults, boot environment, and any existing
+`/etc/kernel/cmdline` before changes.
+The distro's `/etc/sysconfig/kdump` defaults, including file-based kexec loading,
+are preserved.
+
+The script does not reboot or trigger a crash. Until you reboot, reserved
+crashkernel memory is unavailable and `--check-only` will report not ready.
+After reboot, check:
+
+```bash
+sudo ./kdump-enabler.sh --check-only
+sudo kdumpctl status
+cat /sys/kernel/kexec_crash_loaded   # Must be 1
+```
+
+Ensure `/var/crash` has enough free space for your workloads; compressed dump
+sizes vary and the script does not provision additional storage.
 
 ## Post-Installation
 
@@ -135,7 +160,7 @@ sudo kdump-tools test
 sudo systemctl status kdump-tools
 ```
 
-**RHEL/CentOS/Fedora:**
+**RHEL/CentOS/Fedora/Azure Linux:**
 ```bash
 sudo kdumpctl showmem
 sudo systemctl status kdump
@@ -212,6 +237,8 @@ Then update GRUB and reboot.
 The script creates or modifies the following files:
 
 - `/etc/default/grub` - GRUB bootloader configuration (backed up before changes)
+- `/boot/loader/entries/*.conf` and `/boot/grub2/grubenv` - Azure Linux BLS boot configuration (backed up before changes)
+- `/etc/kernel/cmdline` - Azure Linux command line for future kernels (backed up if present)
 - `/etc/default/kdump-tools` - Ubuntu/Debian kdump configuration
 - `/etc/kdump.conf` - RHEL/Fedora/openSUSE kdump configuration
 - `/etc/sysctl.conf` or `/etc/sysctl.d/99-kdump-sysrq.conf` - SysRq configuration
@@ -307,4 +334,3 @@ Samuel Matildes
 ## Support
 
 For issues, questions, or contributions, please visit the [GitHub repository](https://github.com/samatild/kdump-enabler).
-

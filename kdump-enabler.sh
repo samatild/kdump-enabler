@@ -73,7 +73,7 @@ EXAMPLES:
 
 REQUIREMENTS:
     - Must be run as root or with sudo
-    - Supported distributions: Ubuntu, Debian, RHEL, CentOS, Fedora, openSUSE, Arch Linux
+    - Supported distributions: Ubuntu, Debian, RHEL, CentOS, Fedora, openSUSE, Arch Linux, Azure Linux 4
 
 EOF
     exit 0
@@ -127,6 +127,11 @@ detect_distro() {
                 KDUMP_SERVICE="kdump"
                 KDUMP_PACKAGES=("kexec-tools")
                 ;;
+            azurelinux)
+                PACKAGE_MANAGER="dnf"
+                KDUMP_SERVICE="kdump"
+                KDUMP_PACKAGES=("kdump-utils" "kexec-tools" "makedumpfile" "grubby")
+                ;;
             opensuse|opensuse-leap|opensuse-tumbleweed|sles)
                 PACKAGE_MANAGER="zypper"
                 KDUMP_SERVICE="kdump"
@@ -158,6 +163,7 @@ check_kdump_status() {
     print_info "Checking current kdump configuration..."
     
     local kdump_active=false
+    local crashkernel_loaded=true
     local sysrq_enabled=false
     
     # Check if kdump service exists and is active
@@ -191,6 +197,17 @@ check_kdump_status() {
         print_warning "No crashkernel parameter found in kernel command line"
         print_info "A reboot will be required after configuration"
     fi
+
+    if [[ ${DISTRO} == azurelinux ]]; then
+        crashkernel_loaded=false
+        if [[ -r /sys/kernel/kexec_crash_loaded ]] && \
+           [[ $(cat /sys/kernel/kexec_crash_loaded) == 1 ]]; then
+            print_success "Crash capture kernel is loaded"
+            crashkernel_loaded=true
+        else
+            print_warning "Crash capture kernel is not loaded"
+        fi
+    fi
     
     # Check sysrq configuration
     if [[ -f /proc/sys/kernel/sysrq ]]; then
@@ -212,7 +229,7 @@ check_kdump_status() {
     fi
     
     echo ""
-    if ${kdump_active} && ${sysrq_enabled}; then
+    if ${kdump_active} && ${crashkernel_loaded} && ${sysrq_enabled}; then
         print_success "System is properly configured for kdump"
         return 0
     else
@@ -257,6 +274,32 @@ install_packages() {
 #######################################
 # Configure crashkernel parameter
 #######################################
+configure_azure_crashkernel() {
+    local crashkernel_size=$1
+    if ! command -v grubby >/dev/null 2>&1 || [[ ! -d /boot/loader/entries ]]; then
+        print_error "Azure Linux requires grubby and BLS entries in /boot/loader/entries"
+        return 1
+    fi
+
+    local backup_suffix
+    backup_suffix="backup.$(date +%Y%m%d_%H%M%S_%N)"
+    cp -a /boot/loader/entries "/boot/loader/entries.${backup_suffix}"
+    if [[ -f /etc/default/grub ]]; then
+        cp -p /etc/default/grub "/etc/default/grub.${backup_suffix}"
+    fi
+    if [[ -f /boot/grub2/grubenv ]]; then
+        cp -pL /boot/grub2/grubenv "/boot/grub2/grubenv.${backup_suffix}"
+    fi
+    if [[ -f /etc/kernel/cmdline ]]; then
+        cp -p /etc/kernel/cmdline "/etc/kernel/cmdline.${backup_suffix}"
+    fi
+
+    # BLS entries are authoritative; rebuilding grub.cfg alone does not update them.
+    grubby --update-kernel=ALL --remove-args=crashkernel \
+        --args="crashkernel=${crashkernel_size}"
+    print_success "Azure Linux BLS boot entries and future-kernel command line updated"
+}
+
 configure_crashkernel() {
     print_info "Configuring crashkernel parameter..."
     
@@ -283,6 +326,9 @@ configure_crashkernel() {
     
     # Update GRUB configuration based on distro
     case "${DISTRO}" in
+        azurelinux)
+            configure_azure_crashkernel "${crashkernel_size}"
+            ;;
         ubuntu|debian|pop)
             if [[ -f /etc/default/grub ]]; then
                 # Backup GRUB config
@@ -361,6 +407,14 @@ enable_kdump_service() {
     systemctl enable "${KDUMP_SERVICE}.service" 2>/dev/null || systemctl enable "${KDUMP_SERVICE}"
     print_success "kdump service enabled at boot"
     
+    if [[ ${DISTRO} == azurelinux ]] && {
+        [[ ! -r /sys/kernel/kexec_crash_size ]] ||
+        [[ $(cat /sys/kernel/kexec_crash_size) -eq 0 ]]
+    }; then
+        print_warning "kdump service will start after reboot (crashkernel memory is not reserved)"
+        return 0
+    fi
+
     # Start service if crashkernel is already configured
     if grep -q "crashkernel=" /proc/cmdline; then
         systemctl start "${KDUMP_SERVICE}.service" 2>/dev/null || systemctl start "${KDUMP_SERVICE}" || {
@@ -425,7 +479,7 @@ configure_kdump() {
                 print_success "kdump-tools configured"
             fi
             ;;
-        rhel|centos|rocky|almalinux|fedora|opensuse|opensuse-leap|opensuse-tumbleweed|sles)
+        azurelinux|rhel|centos|rocky|almalinux|fedora|opensuse|opensuse-leap|opensuse-tumbleweed|sles)
             if [[ -f /etc/kdump.conf ]]; then
                 cp /etc/kdump.conf /etc/kdump.conf.backup."$(date +%Y%m%d_%H%M%S)" 2>/dev/null || true
                 
@@ -458,7 +512,7 @@ show_instructions() {
     echo ""
     echo "After reboot, verify kdump is working:"
     echo "    sudo kdump-tools test      # Ubuntu/Debian"
-    echo "    sudo kdumpctl showmem      # RHEL/CentOS/Fedora"
+    echo "    sudo kdumpctl showmem      # RHEL/CentOS/Fedora/Azure Linux"
     echo "    sudo systemctl status ${KDUMP_SERVICE}"
     echo ""
     echo -e "To trigger a test crash dump (${RED}WILL REBOOT THE SYSTEM${NC}):"
@@ -596,5 +650,6 @@ EOF
 }
 
 # Run main function
-main "$@"
-
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+    main "$@"
+fi
